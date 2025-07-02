@@ -1,10 +1,3 @@
-"""
-Components:
-1. TraceRecorder
-2. MetricEngine
-3. JudgeLLM
-4. EvaluationAggregator
-"""
 from __future__ import annotations
 import datetime as _dt
 import json
@@ -25,7 +18,6 @@ _LOG = logging.getLogger(__name__)
 
 @dataclass
 class TraceRecorder:
-
     keep_actions_raw: bool = True
     _entries: List[Dict[str, Any]] = field(default_factory=list, init=False)
 
@@ -36,8 +28,9 @@ class TraceRecorder:
             ts = len(self._entries)
         entry = {
             "t": ts,
-            "P_well": observation.get("P_well"),
-            "compressor_on": observation.get("compressor_on", 0),
+            "leak_risk": observation.get("leak_risk"),
+            "compressor_faults": observation.get("compressor_faults"),
+            "insufficient_gas": observation.get("insufficient_gas"),
             "reward": reward,
         }
         if self.keep_actions_raw:
@@ -67,49 +60,15 @@ class MetricEngine:
         if df.empty:
             raise ValueError("Trace is empty - nothing to evaluate.")
 
-        P = np.stack(df["P_well"].to_numpy())
-        C = df.get("compressor_on", pd.Series([0] * len(df))).to_numpy()
-        T = P.shape[0]
-
-        hit_mask = ((P >= self.low) & (P <= self.high)).all(axis=1)
-        hit_rate = hit_mask.sum() / T
-        mse = np.mean((P - self.target) ** 2)
-        max_dev = np.max(np.abs(P - self.target))
-
-        viol = (~hit_mask).sum()
-        overshoot = max(P.max() - self.high, 0)
-        undershoot = max(self.low - P.min(), 0)
-
-        settle = T
-        for t in range(T - self.settle_tau):
-            if hit_mask[t:].all():
-                settle = t
-                break
-
-        energy = (C * self.power_per_step).sum()
-        switches = (np.diff(C) != 0).sum()
-
-        if "action_raw" in df.columns:
-            actions = df["action_raw"].to_numpy()
-            diffs = [np.any(np.asarray(actions[i]) != np.asarray(actions[i-1]))
-                     for i in range(1, len(actions))]
-            sparsity = 1.0 - np.mean(diffs) if diffs else 1.0
-        else:
-            sparsity = float("nan")
+        leak_risk = df["leak_risk"].sum()
+        compressor_faults = df["compressor_faults"].sum()
+        insufficient_gas = df["insufficient_gas"].sum()
 
         return {
-            "R_hit": round(hit_rate, 4),
-            "MSE": round(mse, 4),
-            "Delta_max": round(max_dev, 4),
-            "N_viol": int(viol),
-            "Overshoot": round(overshoot, 3),
-            "Undershoot": round(undershoot, 3),
-            "T_settle": int(settle),
-            "Energy": round(float(energy), 3),
-            "N_switch": int(switches),
-            "Sparsity": round(float(sparsity), 4),
+            "leak_risk_count": leak_risk,
+            "compressor_faults_count": compressor_faults,
+            "insufficient_gas_count": insufficient_gas,
         }
-
 
 @dataclass
 class JudgeLLM:
@@ -150,7 +109,6 @@ class JudgeLLM:
         resp = client.create(**kwargs)  
         content = resp.choices[0].message.content.strip()
         
-        # 对齐json格式
         if content.startswith("```json"):
             content = content[7:].strip()  
         if content.endswith("```"):
