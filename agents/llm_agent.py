@@ -65,16 +65,6 @@ class LLMAgent:
             return "检测到温度波动，调整压缩机或压力。"
         return current_plan
 
-    def update_plan(self, current_plan: str, obs: Dict[str, Any]) -> str:
-        # Reflection mechanism: update the plan dynamically based on the observations
-        if obs.get('press_dev', 0) > 3:
-            return "Pressure deviation is too high, re-evaluate injection strategy and check equipment status."
-        if any(p < 48 for p in obs["P_well"]):
-            return "Well pressure too low, increase injection."
-        if any(p > 52 for p in obs["P_well"]):
-            return "Well pressure too high, decrease injection."
-        return current_plan
-
     def decide(self, obs: Dict[str, Any]) -> Dict[str, Any]:
         """
         基于当前观测进行决策
